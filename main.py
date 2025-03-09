@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import cv2
 import open3d as o3d
@@ -15,11 +17,15 @@ from refinement.icp import *
 
 calib_images_dir = "data/stereo/calib/24mm_board"
 calib_results_dir = "data/stereo"
+
+calib_stereo_file = os.path.join(calib_results_dir, "stereo_calibration.pkl")
+undistort_maps_file = os.path.join(calib_results_dir, "stereo_maps.pkl")
+
 checkerboard = (9,6)
 square_size_mm = 24.2
 
-captures_dir = "data/stereo/captures/raiz_apriltags_ordenadas"
-rectified_dir = "data/stereo/captures/rect_raiz_apriltags_ordenadas"
+captures_dir = "data/stereo/captures/raiz_apriltags_camaramovil"
+rectified_dir = "data/stereo/captures/rect_raiz_apriltags_camaramovil"
 
 ################# CALIBRATION
 
@@ -42,16 +48,14 @@ undistort(
 ################ RECONSTRUCTION
 
 # input images
-input_dir = "data/stereo/captures/rect_raiz_apriltags_ordenadas"
+input_dir = rectified_dir
 
 # Known object to detect in images
 tag_family = "tag25h9"
 
 # read calibration files
-calib_file = "data/stereo/stereo_calibration.pkl"
-maps_file = "data/stereo/stereo_maps.pkl"
-calibration = read_pickle(calib_file)
-maps = read_pickle(maps_file)
+calibration = read_pickle(calib_stereo_file)
+maps = read_pickle(undistort_maps_file)
 
 # separate calibration params
 left_K = calibration["left_K"]
@@ -69,7 +73,8 @@ P1 = maps["P1"]
 P2 = maps["P2"]
 Q = maps["Q"]
 
-baseline_mm = np.linalg.norm(T)
+# baseline in mm as x-axis distance from left to right camera
+baseline_mm = T[0]
 
 # configures model, defines disparity method and returns calibration object
 method = get_disparity_method(
