@@ -88,6 +88,12 @@ left_file_names, right_file_names = prepare_imgs(input_dir)
 all_points_3d = np.empty((0, 3))
 all_colors = np.empty((0, 3))
 all_camera_extrinsics = []
+all_tags_3dpoints = np.empty((0, 3))
+corner_colors = np.array([[1,0,0],
+                          [0,1,0],
+                          [0,0,1],
+                          [1,1,0]], dtype = np.float64)
+all_tags_colors = np.empty((0, 3))
 export_num = 0
 
 for left_file_name, right_file_name in zip(
@@ -135,6 +141,12 @@ for left_file_name, right_file_name in zip(
 
         print(o_T_c)
 
+        all_camera_extrinsics.append(c_T_o)
+        all_tags_3dpoints = np.vstack((all_tags_3dpoints, left_object_points))
+        num_tags = len(left_object_points) // 4
+        repeated_corner_colors = np.tile(corner_colors, (num_tags, 1))
+        all_tags_colors = np.vstack((all_tags_colors, repeated_corner_colors))
+
         ############ DISPARITY #######################
         # disparity map
         disparity = compute_disparity(
@@ -162,56 +174,20 @@ for left_file_name, right_file_name in zip(
         point_cloud = point_cloud[:3].T
 
         # Filter points so only the parts of interest of the scene are reconstructed
-        point_cloud, colors = filter_point_cloud(point_cloud, colors,"raiz_apriltags")
-
-        #### ICP
-        # if it's the first point cloud save it
-        if all_points_3d.shape[0] == 0:
-            all_points_3d = np.vstack((all_points_3d, point_cloud))
-            all_colors = np.vstack((all_colors, colors))
-        # If there already is a point cloud use ICP to adjust the new one
-        else:
-            # transform pointclouds to o3d format to use ICP
-            target_cloud_o3d = np_to_o3d_pointcloud(point_cloud, colors)
-            reference_cloud_o3d = np_to_o3d_pointcloud(all_points_3d, all_colors)
-
-            # downsample and calculate fpfh for each cloud
-            reference_down, reference_fpfh = preprocess_point_cloud(reference_cloud_o3d, 0.05)
-            target_down, target_fpfh = preprocess_point_cloud(target_cloud_o3d, 0.05)
-
-            # run ransac for gloal estimation
-            result_ransac = execute_global_registration(reference_down, target_down,
-                                                        reference_fpfh, target_fpfh,
-                                                        0.05)
-
-            # ICP between reference cloud and target cloud
-            icp_result = o3d.pipelines.registration.registration_icp(
-                target_cloud_o3d, reference_cloud_o3d,
-                max_correspondence_distance=0.02,
-                estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPlane(),
-                init=result_ransac.transformation,
-                #criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=100)
-            )
-
-            print(f"Fitness: {icp_result.fitness}, RMSE: {icp_result.inlier_rmse}")
-
-            # Transform point cloud
-            target_cloud_o3d.transform(icp_result.transformation)
-
-            draw_registration_result(reference_cloud_o3d, target_cloud_o3d, icp_result.transformation)
-
-            # merge clouds
-            all_points_3d = np.vstack((all_points_3d, np.asarray(target_cloud_o3d.points)))
-            all_colors = np.vstack((all_colors, np.asarray(target_cloud_o3d.colors)))
-            break
-
-
-        all_camera_extrinsics.append(c_T_o)
+        point_cloud, colors = filter_point_cloud(point_cloud, colors, "raiz_apriltags")
+        
+        all_points_3d = np.vstack((all_points_3d, point_cloud))
+        all_colors = np.vstack((all_colors, colors))
 
 ##################### VISUALIZATION
 
 # Creating scene coordinate axis (should be on pattern's corner)
 axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=50.0, origin=[0, 0, 0])
+
+# Creating pointcloud object with calculated points and colors
+tags_pcd = o3d.geometry.PointCloud()
+tags_pcd.points = o3d.utility.Vector3dVector(all_tags_3dpoints)
+tags_pcd.colors = o3d.utility.Vector3dVector(all_tags_colors)
 
 # Creating pointcloud object with calculated points and colors
 pcd = o3d.geometry.PointCloud()
@@ -223,15 +199,15 @@ print(o_T_c.dtype)
 
 # Visualizing cameras
 camera_frustums = []
-for c_T_o in all_camera_extrinsics:
+for i, c_T_o in enumerate(all_camera_extrinsics):
     camera_frustum = o3d.geometry.LineSet.create_camera_visualization(view_width_px=left_size[0], view_height_px=left_size[1], intrinsic=left_K[:3, :3],
                                                                         extrinsic=c_T_o)
     camera_frustum.scale(10, camera_frustum.get_center())
     camera_frustums.append(camera_frustum)
 
 # Final scene rendering
-o3d.visualization.draw_geometries([pcd]) #axis, *camera_frustums
+o3d.visualization.draw_geometries([tags_pcd, axis, *camera_frustums])
 
 # Saving point cloud
-output_file = "results/nube_de_puntos.ply"
-o3d.io.write_point_cloud(output_file, pcd)
+#output_file = "results/nube_de_puntos.ply"
+#o3d.io.write_point_cloud(output_file, pcd)
