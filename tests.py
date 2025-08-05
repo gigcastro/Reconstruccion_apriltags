@@ -85,19 +85,20 @@ method = get_disparity_method(
 
 left_file_names, right_file_names = prepare_imgs(input_dir)
 
-all_points_3d = np.empty((0, 3))
-all_colors = np.empty((0, 3))
+object_cloud = o3d.geometry.PointCloud()
+
 all_camera_extrinsics = []
 all_tags_3dpoints = np.empty((0, 3))
 corner_colors = np.array([[1,0,0],
                           [0,1,0],
                           [0,0,1],
-                          [1,1,0]], dtype = np.float64)
+                          [1,0,1]], dtype = np.float64)
 all_tags_colors = np.empty((0, 3))
 export_num = 0
 
-for left_file_name, right_file_name in zip(
-        left_file_names, right_file_names):
+for i, (left_file_name, right_file_name) in enumerate(zip(left_file_names, right_file_names)):
+        
+        print(f"Processing {left_file_name} and {right_file_name}")
 
         image_size, left_image, right_image = process_images(left_file_name, right_file_name, image_size)
         left_size = (left_image.shape[1], left_image.shape[0])
@@ -120,6 +121,11 @@ for left_file_name, right_file_name in zip(
             print("No se encontraron suficientes AprilTags en ambas imágenes.")
             continue
 
+        if left_object_points.size == 4:
+            pnp_method = cv2.SOLVEPNP_IPPE
+        else:
+            pnp_method = cv2.SOLVEPNP_EPNP
+        
         # rvec rota puntos del sistema de coordenadas del objeto al sistema de coordenadas de la cámara
         # rvec is the rotation vector and tvec is the movement vector of the cameras in respect to the world origin
         ret, rvec, tvec = cv2.solvePnP(
@@ -127,7 +133,7 @@ for left_file_name, right_file_name in zip(
             left_image_points,
             left_K,
             left_dist,
-            flags=cv2.SOLVEPNP_EPNP
+            flags=pnp_method
         )
 
         # Armamos la matriz de transformación homogénea que convierte puntos del sistema de coordenadas del objeto a la cámara y vice versa
@@ -159,43 +165,80 @@ for left_file_name, right_file_name in zip(
 
         points_3d = cv2.reprojectImageTo3D(disparity, Q)
 
+        # Reshape points_3d to a 2D array of shape (N, 3)
         point_cloud = points_3d.reshape(-1, points_3d.shape[-1])
-        good_points = ~np.isinf(point_cloud).any(axis=1)
 
-        # image texture
+        # Image texture
         colors = cv2.cvtColor(left_color, cv2.COLOR_BGR2RGB).astype(np.float64) / 255.0
         colors = colors.reshape(-1, points_3d.shape[-1])
 
+        # Remove points with infinite values
+        good_points = ~np.isinf(point_cloud).any(axis=1)
         point_cloud = point_cloud[good_points]
         colors = colors[good_points]
 
-        # Transforming points to take them to the object based coordinate system
-        point_cloud = o_T_c @ np.vstack((point_cloud.T, np.ones(point_cloud.shape[0])))
-        point_cloud = point_cloud[:3].T
-
         # Filter points so only the parts of interest of the scene are reconstructed
         point_cloud, colors = filter_point_cloud(point_cloud, colors, "raiz_apriltags")
-        
-        all_points_3d = np.vstack((all_points_3d, point_cloud))
-        all_colors = np.vstack((all_colors, colors))
+
+        # point_cloud as open3d point cloud
+        point_cloud = np_to_o3d_pointcloud(point_cloud, colors)
+
+        point_cloud = point_cloud.transform(o_T_c)  # Transform from camera to object coordinates
+
+        cl, ind = point_cloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        point_cloud = point_cloud.select_by_index(ind)
+
+        # Transforming points to take them to the object based coordinate system
+        # point_cloud = o_T_c @ np.vstack((point_cloud.T, np.ones(point_cloud.shape[0])))
+        # point_cloud = point_cloud[:3].T
+
+        if object_cloud.is_empty():
+            object_cloud.points.extend(point_cloud.points)
+            object_cloud.colors.extend(point_cloud.colors)
+            #object_cloud.normals.extend(point_cloud.normals)
+            continue
+
+        #### ICP
+
+        # # downsample and calculate fpfh for each cloud
+        # reference_down, reference_fpfh = preprocess_point_cloud(reference_cloud_o3d, 0.05)
+        # target_down, target_fpfh = preprocess_point_cloud(target_cloud_o3d, 0.05)
+
+        # # run ransac for gloal estimation
+        # result_ransac = execute_global_registration(reference_down, target_down,
+        #                                             reference_fpfh, target_fpfh,
+        #                                             0.05)
+
+        # ICP between reference cloud and target cloud
+        icp_result = o3d.pipelines.registration.registration_icp(
+            point_cloud, object_cloud,
+            max_correspondence_distance=10000,
+            init = np.identity(4),
+            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+            #criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=100)
+        )
+
+        print(f"Fitness: {icp_result.fitness}, RMSE: {icp_result.inlier_rmse}, Transformation:\n{icp_result.transformation}")
+
+        # Transform point cloud
+        point_cloud = point_cloud.transform(icp_result.transformation)
+
+        #draw_registration_result(object_cloud, point_cloud, icp_result.transformation)
+
+        # merge clouds
+        object_cloud.points.extend(point_cloud.points)
+        object_cloud.colors.extend(point_cloud.colors)
+        #object_cloud.normals.extend(point_cloud.normals)
 
 ##################### VISUALIZATION
 
 # Creating scene coordinate axis (should be on pattern's corner)
-axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=50.0, origin=[0, 0, 0])
+axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=25.0, origin=[0, 0, 0])
 
 # Creating pointcloud object with calculated points and colors
 tags_pcd = o3d.geometry.PointCloud()
 tags_pcd.points = o3d.utility.Vector3dVector(all_tags_3dpoints)
 tags_pcd.colors = o3d.utility.Vector3dVector(all_tags_colors)
-
-# Creating pointcloud object with calculated points and colors
-pcd = o3d.geometry.PointCloud()
-pcd.points = o3d.utility.Vector3dVector(all_points_3d)
-pcd.colors = o3d.utility.Vector3dVector(all_colors)
-
-print(left_K.dtype)
-print(o_T_c.dtype)
 
 # Visualizing cameras
 camera_frustums = []
@@ -206,8 +249,8 @@ for i, c_T_o in enumerate(all_camera_extrinsics):
     camera_frustums.append(camera_frustum)
 
 # Final scene rendering
-o3d.visualization.draw_geometries([tags_pcd, axis, *camera_frustums])
+o3d.visualization.draw_geometries([tags_pcd, axis, *camera_frustums, object_cloud])
 
 # Saving point cloud
 #output_file = "results/nube_de_puntos.ply"
-#o3d.io.write_point_cloud(output_file, pcd)
+#o3d.io.write_point_cloud(output_file, object_cloud)

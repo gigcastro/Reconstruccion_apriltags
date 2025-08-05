@@ -236,6 +236,7 @@ def detect_apriltags(image, tag_family):
 
     for detection in detections:
         tag_id = detection.tag_id
+        print(f"Detected tag {tag_id} with corners: {detection.corners}")
         #tag_center_object  = tag_positions_mm[tag_id]
         #object_corners = center_to_corners(tag_center_object)
 

@@ -46,7 +46,7 @@ def process_images(left_file_name,
                    right_file_name,
                    image_size):
 
-    print("processing", left_file_name, right_file_name)
+    #print("processing", left_file_name, right_file_name)
 
     # read left and right images
     left_image = cv2.imread(left_file_name, cv2.IMREAD_GRAYSCALE)

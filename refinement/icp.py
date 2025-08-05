@@ -16,7 +16,7 @@ def draw_registration_result(source, target, transformation):
 def np_to_o3d_pointcloud(point_cloud, colors):
     cloud_o3d = o3d.geometry.PointCloud()
     cloud_o3d.points = o3d.utility.Vector3dVector(point_cloud)
-    o3d.colors = o3d.utility.Vector3dVector(colors)
+    cloud_o3d.colors = o3d.utility.Vector3dVector(colors)
 
     cloud_o3d.estimate_normals(
         search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)

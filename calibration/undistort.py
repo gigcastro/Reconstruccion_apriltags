@@ -29,6 +29,6 @@ def undistort(calib_results, maps, input_dir, output_dir):
         output_left_file = os.path.join(output_dir, rleft_file_name)
         output_right_file = os.path.join(output_dir, rright_file_name)
 
-        print(f"writting undistorted images {rleft_file_name}, {rright_file_name}...")
+        #print(f"writting undistorted images {rleft_file_name}, {rright_file_name}...")
         cv2.imwrite(output_left_file, left_image_rectified)
         cv2.imwrite(output_right_file, right_image_rectified)
