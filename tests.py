@@ -12,6 +12,7 @@ from utils import read_pickle
 from images import prepare_imgs, process_images
 from filter_point_cloud import filter_point_cloud
 from refinement.icp import *
+import open3d.t.pipelines.registration as treg
 
 ################## SETUP
 
@@ -58,6 +59,7 @@ calibration = read_pickle(calib_stereo_file)
 maps = read_pickle(undistort_maps_file)
 
 # separate calibration params
+print("Calibration parameters: \n", calibration)
 left_K = calibration["left_K"]
 left_dist = calibration["left_dist"]
 right_K = calibration["right_K"]
@@ -111,14 +113,14 @@ for i, (left_file_name, right_file_name) in enumerate(zip(left_file_names, right
         ######### POSE ##################
 
         left_object_points, left_image_points = detect_apriltags(left_image_rectified,tag_family)
-        right_object_points, right_image_points = detect_apriltags(right_image_rectified, tag_family)
+        #right_object_points, right_image_points = detect_apriltags(right_image_rectified, tag_family)
 
         left_color = cv2.cvtColor(left_image_rectified, cv2.COLOR_GRAY2BGR)
         right_color = cv2.cvtColor(right_image_rectified, cv2.COLOR_GRAY2BGR)
 
         # Verificar si se encontraron suficientes puntos
-        if len(left_image_points) < 1 or len(right_image_points) < 1:
-            print("No se encontraron suficientes AprilTags en ambas imágenes.")
+        if len(left_image_points) < 1:
+            print("No se encontraron suficientes AprilTags en la imagen izquierda.")
             continue
 
         if left_object_points.size == 4:
@@ -145,23 +147,21 @@ for i, (left_file_name, right_file_name) in enumerate(zip(left_file_names, right
         # o_T_c = np.vstack((o_T_c, [0, 0, 0, 1]))
         # c_T_o = np.linalg.inv(o_T_c)
 
-        print(o_T_c)
-
         all_camera_extrinsics.append(c_T_o)
         all_tags_3dpoints = np.vstack((all_tags_3dpoints, left_object_points))
         num_tags = len(left_object_points) // 4
         repeated_corner_colors = np.tile(corner_colors, (num_tags, 1))
         all_tags_colors = np.vstack((all_tags_colors, repeated_corner_colors))
 
-        ############ DISPARITY #######################
-        # disparity map
+        print("############ DISPARITY #######################")
+        
         disparity = compute_disparity(
             method,
             left_image_rectified,
             right_image_rectified
         )
 
-        ############# TRIANGULATION #############
+        print("############# TRIANGULATION #############")
 
         points_3d = cv2.reprojectImageTo3D(disparity, Q)
 
@@ -177,13 +177,19 @@ for i, (left_file_name, right_file_name) in enumerate(zip(left_file_names, right
         point_cloud = point_cloud[good_points]
         colors = colors[good_points]
 
-        # Filter points so only the parts of interest of the scene are reconstructed
-        point_cloud, colors = filter_point_cloud(point_cloud, colors, "raiz_apriltags")
-
         # point_cloud as open3d point cloud
         point_cloud = np_to_o3d_pointcloud(point_cloud, colors)
 
-        point_cloud = point_cloud.transform(o_T_c)  # Transform from camera to object coordinates
+        print(type(point_cloud))
+
+        #point_cloud = point_cloud.transform(o_T_c)  # Transform from camera to object coordinates
+
+        print("############# CROP & FILTERING #############")
+
+        # Filter points so only the parts of interest of the scene are reconstructed
+        mins = np.array([-50, -50, -200])
+        maxs = np.array([50, 50, 200])
+        point_cloud = point_cloud.crop(o3d.geometry.AxisAlignedBoundingBox(mins, maxs))
 
         cl, ind = point_cloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
         point_cloud = point_cloud.select_by_index(ind)
@@ -195,10 +201,10 @@ for i, (left_file_name, right_file_name) in enumerate(zip(left_file_names, right
         if object_cloud.is_empty():
             object_cloud.points.extend(point_cloud.points)
             object_cloud.colors.extend(point_cloud.colors)
-            #object_cloud.normals.extend(point_cloud.normals)
+            object_cloud.normals.extend(point_cloud.normals)
             continue
 
-        #### ICP
+        print("############# ICP #############")
 
         # # downsample and calculate fpfh for each cloud
         # reference_down, reference_fpfh = preprocess_point_cloud(reference_cloud_o3d, 0.05)
@@ -209,26 +215,56 @@ for i, (left_file_name, right_file_name) in enumerate(zip(left_file_names, right
         #                                             reference_fpfh, target_fpfh,
         #                                             0.05)
 
-        # ICP between reference cloud and target cloud
-        icp_result = o3d.pipelines.registration.registration_icp(
-            point_cloud, object_cloud,
-            max_correspondence_distance=10000,
-            init = np.identity(4),
-            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-            #criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=100)
-        )
+        # # ICP between reference cloud and target cloud
+        # icp_result = o3d.pipelines.registration.registration_icp(
+        #     point_cloud, object_cloud,
+        #     max_correspondence_distance=5000,
+        #     init = np.identity(4),
+        #     estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+        #     #criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=100)
+        # )
+
+        voxel_sizes = o3d.utility.DoubleVector([50, 10, 0.5])
+
+        # Select the `Estimation Method`, and `Robust Kernel` (for outlier-rejection).
+        estimation = treg.TransformationEstimationPointToPoint()
+
+        # List of Convergence-Criteria for Multi-Scale ICP:
+        criteria_list = [
+            treg.ICPConvergenceCriteria(relative_fitness=0.0001,
+                                        relative_rmse=0.0001,
+                                        max_iteration=20),
+            treg.ICPConvergenceCriteria(0.00001, 0.00001, 15),
+            treg.ICPConvergenceCriteria(0.000001, 0.000001, 10)
+        ]
+
+        # `max_correspondence_distances` for Multi-Scale ICP (o3d.utility.DoubleVector):
+        max_correspondence_distances = o3d.utility.DoubleVector([50000, 5000, 500])
+
+        # Initial alignment or source to target transform.
+        init_source_to_target = o3d.core.Tensor.eye(4, o3d.core.Dtype.Float32)
+
+        # Select the `Estimation Method`, and `Robust Kernel` (for outlier-rejection).
+        estimation = treg.TransformationEstimationPointToPlane()
+
+        icp_result = treg.multi_scale_icp(o3d.t.geometry.PointCloud.from_legacy(point_cloud),o3d.t.geometry.PointCloud.from_legacy(object_cloud), voxel_sizes,
+                                          criteria_list, max_correspondence_distances, 
+                                          init_source_to_target,
+                                          estimation)
 
         print(f"Fitness: {icp_result.fitness}, RMSE: {icp_result.inlier_rmse}, Transformation:\n{icp_result.transformation}")
 
         # Transform point cloud
-        point_cloud = point_cloud.transform(icp_result.transformation)
+        point_cloud = point_cloud.transform(icp_result.transformation.numpy())
 
-        #draw_registration_result(object_cloud, point_cloud, icp_result.transformation)
+        draw_registration_result(object_cloud, point_cloud, icp_result.transformation.numpy())
 
         # merge clouds
         object_cloud.points.extend(point_cloud.points)
         object_cloud.colors.extend(point_cloud.colors)
-        #object_cloud.normals.extend(point_cloud.normals)
+        object_cloud.normals.extend(point_cloud.normals)
+
+        break
 
 ##################### VISUALIZATION
 
