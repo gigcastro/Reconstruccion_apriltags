@@ -2,27 +2,30 @@ from pathlib import Path
 
 from disparity.methods import Config, Calibration, InputPair
 from disparity.method_cre_stereo import CREStereo
+from disparity.method_opencv_bm import StereoBM
+from disparity.method_opencv_bm import StereoSGBM
 
 
 def get_disparity_method(
         image_size,
-        K,
-        baseline_meters
+        fx, fy, cx0, cx1, cy, # left f, left cx, right cx, both cy
+        baseline_meters,
+        method_name = "OpenCV_SGBM"
 ):
     models_path = Path("data/models")
     config = Config(models_path=models_path)
 
-    method = CREStereo(config)
-    # method = StereoSGBM(config)
+    if method_name == "OpenCV_BM":
+        method = StereoBM(config)
+    elif method_name == "OpenCV_SGBM":
+        method = StereoSGBM(config)
+    elif method_name == "CREStereo":
+        method = CREStereo(config)
+    else:
+        raise ValueError(f"Unknown disparity method: {method_name}")
 
     # width an height
     w, h = image_size
-
-    # focal length and camera center
-    fx = K[0, 0]
-    fy = K[1, 1]
-    cx = K[0, 2]
-    cy = K[1, 2]
 
     j_calib = {
         "width": w,
@@ -30,8 +33,8 @@ def get_disparity_method(
         "baseline_meters": baseline_meters,
         "fx": fx,
         "fy": fy,
-        "cx0": cx,
-        "cx1": cx,
+        "cx0": cx0,
+        "cx1": cx1,
         "cy": cy,
         "depth_range": [0.1, 30.0],
         "left_image_rect_normalized": [0, 0, 1, 1]
