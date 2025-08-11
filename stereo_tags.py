@@ -21,7 +21,7 @@ def np_to_o3d_pointcloud(point_cloud, colors):
 
 ################## DATASET SELECTION ##################
 DATASETS_PATH = "datasets/stereo_raices"
-SEQUENCE_NAME = "raiz_apriltags_camaramovil"
+SEQUENCE_NAME = "rect_raiz_apriltags_camaramovil"
 
 CALIB_STEREO_FILE = os.path.join(DATASETS_PATH, "stereo_calibration.pkl")
 UNDISTORT_MAPS_FILE = os.path.join(DATASETS_PATH, "stereo_maps.pkl")
@@ -33,8 +33,8 @@ IMAGES_PATH = SEQUENCE_PATH
 
 ################## SETUP PARAMETERS ##################
 
-# Use pre-rectified images, seeks for "rect_" + IMAGES_PATH
-USE_PRE_RECT_IMAGES = True
+# Set to False when using a "rect_" sequence
+RECTIFY_IMAGES = False
 
 # Min an max limits of object with respect his own coordinate system (for cropping triangulated point cloud)
 MAX_OBJECT_SIZE = 35 # max object base side size in mm
@@ -46,11 +46,7 @@ DISPARITY_METHOD_NAME = "OpenCV_SGBM"  # or "OpenCV_BM", "OpenCV_SGBM", "CRESter
 ################## SETTING ENVIRONMENT AND LOADING CALIBRATION ##################
 
 # input images
-if USE_PRE_RECT_IMAGES:
-    rectified_path = os.path.join(DATASETS_PATH, "captures", "rect_" + SEQUENCE_NAME)
-    input_dir = rectified_path
-else:
-    input_dir = IMAGES_PATH
+input_dir = IMAGES_PATH
 
 # Known object to detect in images
 tag_family = "tag25h9"
@@ -125,18 +121,18 @@ def reset_view(view_ctr):
 reset_view(view_ctr)
 
 # Register key callback to stop loop
-stop = False
+stopped = False
 def on_key_pressed(vis):
-    global stop
+    global stopped
     print("Key 'S' pressed. Stopping loop.")
-    stop = True
+    stopped = True
 vis.register_key_callback(ord('S'), on_key_pressed)
 
 ################ IMAGE PROCESSING ################
 
 for i, (left_file_name, right_file_name) in enumerate(zip(left_file_names, right_file_names)):
         
-        if stop:
+        if stopped:
             print("Processing loop stopped.")
             break
         
@@ -149,13 +145,13 @@ for i, (left_file_name, right_file_name) in enumerate(zip(left_file_names, right
         left_size = (left_image.shape[1], left_image.shape[0])
         right_size = (right_image.shape[1], right_image.shape[0])
 
-        # rectify images
-        if USE_PRE_RECT_IMAGES:
-            left_image_rectified = left_image
-            right_image_rectified = right_image
-        else:
+        # Rectify images if required
+        if RECTIFY_IMAGES:
             left_image_rectified = cv2.remap(left_image, left_map_x, left_map_y, cv2.INTER_LINEAR)
             right_image_rectified = cv2.remap(right_image, right_map_x, right_map_y, cv2.INTER_LINEAR)
+        else:
+            left_image_rectified = left_image
+            right_image_rectified = right_image
 
         ######### POSE ##################
 
@@ -275,8 +271,16 @@ for i, (left_file_name, right_file_name) in enumerate(zip(left_file_names, right
 reset_view(view_ctr)
 vis.run()
 
+if stopped:
+    print("Processing loop stopped by user, results won't be saved.")
+    exit(0)
+
 # Saving point cloud
 print("Saving point cloud...")
+
+if not os.path.exists(SEQUENCE_OUTPUT_PATH):
+    os.makedirs(SEQUENCE_OUTPUT_PATH)
+
 output_file = os.path.join(SEQUENCE_OUTPUT_PATH, "object_point_cloud_tags.ply")
 o3d.io.write_point_cloud(output_file, object_cloud)
 print("Saving camera poses o_T_c estimated by tags ...")

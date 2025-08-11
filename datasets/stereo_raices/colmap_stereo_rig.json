@@ -1,0 +1,24 @@
+[
+  {
+    "stereo_rig": [
+      {
+        "image_prefix": "left_",
+        "ref_sensor": true
+      },
+      {
+        "image_prefix": "right_",
+        "cam_from_rig_rotation": [
+            -0.00256609,
+            -0.0100373,
+            -0.000276135,
+            0.999946
+        ],
+        "cam_from_rig_translation": [
+            62.6514,
+            0.138565,
+            0.9942
+        ]
+      }
+    ]
+  }
+]

@@ -12,7 +12,7 @@ def get_disparity_method(
         baseline_meters,
         method_name = "OpenCV_SGBM"
 ):
-    models_path = Path("data/models")
+    models_path = Path("disparity/models")
     config = Config(models_path=models_path)
 
     if method_name == "OpenCV_BM":
