@@ -3,4 +3,4 @@ __pycache__/
 *.py[cod]
 
 # Ignorar archivos de nubes de puntos
-*.ply
+#*.ply

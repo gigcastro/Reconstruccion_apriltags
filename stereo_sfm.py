@@ -39,7 +39,7 @@ USE_POSE_PRIORS = os.path.join(DATASETS_PATH, "captures", "rect_raiz_apriltags_c
 MAX_OBJECT_SIZE = 35 # max object base side size in mm
 MAX_OBJECT_HEIGHT = 200 # max object height in mm
 
-DENSE_RECONSTRUCTION = True # if True, COLMAP will perform dense reconstruction
+DENSE_RECONSTRUCTION = False # if True, COLMAP will perform dense reconstruction (REQUIRES CUDA COMPILATION)
 
 ################## SETTING ENVIRONMENT AND LOADING CALIBRATION ##################
 
@@ -239,20 +239,18 @@ for point3D_id, point3D in reconstruction.points3D.items():
 vis.add_geometry(sparse_point_cloud)
 
 # Dense reconstruction
-pycolmap.undistort_images(mvs_path, colmap_ws_path, image_path)
-pycolmap.patch_match_stereo(mvs_path)  # requires compilation (from source) with CUDA
+if DENSE_RECONSTRUCTION:
+    pycolmap.undistort_images(mvs_path, colmap_ws_path, image_path)
+    pycolmap.patch_match_stereo(mvs_path)  # requires compilation (from source) with CUDA
 
-fusion_options = pycolmap.StereoFusionOptions()
-fusion_options.bounding_box = (np.array([-MAX_OBJECT_SIZE, -MAX_OBJECT_SIZE, -MAX_OBJECT_HEIGHT], np.dtype(np.float32)), np.array([MAX_OBJECT_SIZE, MAX_OBJECT_SIZE, MAX_OBJECT_HEIGHT], np.dtype(np.float32)))
-pycolmap.stereo_fusion(mvs_path / "object_point_cloud_sfm.ply", mvs_path)
+    fusion_options = pycolmap.StereoFusionOptions()
+    fusion_options.bounding_box = (np.array([-MAX_OBJECT_SIZE, -MAX_OBJECT_SIZE, -MAX_OBJECT_HEIGHT], np.dtype(np.float32)), np.array([MAX_OBJECT_SIZE, MAX_OBJECT_SIZE, MAX_OBJECT_HEIGHT], np.dtype(np.float32)))
+    pycolmap.stereo_fusion(mvs_path / "object_point_cloud_sfm.ply", mvs_path)
 
-# Load the point cloud
-object_cloud = o3d.io.read_point_cloud(mvs_path / "object_point_cloud_sfm.ply")
-vis.add_geometry(object_cloud)
+    # Load the point cloud
+    object_cloud = o3d.io.read_point_cloud(mvs_path / "object_point_cloud_sfm.ply")
+    vis.add_geometry(object_cloud)
 
 ##################### VISUALIZATION #####################
 
 vis.run()
-
-# Saving results
-# TODO: SAVE POSES!
